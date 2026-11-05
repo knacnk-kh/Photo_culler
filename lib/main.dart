@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter/gestures.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:photo_view/photo_view.dart';
@@ -34,25 +36,25 @@ class PhotoCullerApp extends StatelessWidget {
 enum SwipeAction {
   discard(
     folderName: 'คัดทิ้ง',
-    label: 'คัดทิ้ง',
+    label: 'คัดทิ้ง (← / A)',
     color: Colors.redAccent,
     icon: Icons.delete_outline,
   ),
   keep(
     folderName: 'ภาพที่ใช้ได้',
-    label: 'เก็บไว้ (ใช้ได้)',
+    label: 'เก็บไว้ (→ / D)',
     color: Colors.greenAccent,
     icon: Icons.check_circle_outline,
   ),
   best(
     folderName: 'ภาพที่นำไปใช้ได้ทันที',
-    label: 'ดีที่สุด (ใช้ทันที)',
+    label: 'ดีที่สุด (↑ / W)',
     color: Colors.amberAccent,
     icon: Icons.star_outline,
   ),
   atmosphere(
     folderName: 'ภาพบรรยากาศ',
-    label: 'ภาพบรรยากาศ',
+    label: 'ภาพบรรยากาศ (↓ / S)',
     color: Colors.lightBlueAccent,
     icon: Icons.landscape_outlined,
   );
@@ -95,16 +97,14 @@ class _CullerHomePageState extends State<CullerHomePage> {
   int _currentIndex = 0;
   bool _isLoading = false;
 
-  // สำหรับระบบปัดและซูม
   Offset _dragOffset = Offset.zero;
   int _pointerCount = 0;
   bool _isZoomed = false;
   late PhotoViewScaleStateController _scaleStateController;
+  late PhotoViewController _photoViewController;
+  final FocusNode _keyboardFocusNode = FocusNode();
 
-  // ประวัติการย้ายไฟล์ (เผื่อกด Undo)
   final List<MoveHistory> _history = [];
-
-  // แคชข้อมูลรูปภาพ (เพื่อให้เปิดรูปถัดไปและไฟล์ ARW ได้ทันทีโดยไม่กระตุก)
   final Map<String, Uint8List?> _imageBytesCache = {};
 
   static const Set<String> _supportedExtensions = {
@@ -115,12 +115,15 @@ class _CullerHomePageState extends State<CullerHomePage> {
   void initState() {
     super.initState();
     _scaleStateController = PhotoViewScaleStateController();
+    _photoViewController = PhotoViewController();
     _requestPermissions();
   }
 
   @override
   void dispose() {
     _scaleStateController.dispose();
+    _photoViewController.dispose();
+    _keyboardFocusNode.dispose();
     super.dispose();
   }
 
@@ -157,6 +160,7 @@ class _CullerHomePageState extends State<CullerHomePage> {
       setState(() {
         _isLoading = false;
       });
+      _keyboardFocusNode.requestFocus();
     }
   }
 
@@ -174,7 +178,6 @@ class _CullerHomePageState extends State<CullerHomePage> {
           }
         }
       }
-      // เรียงตามชื่อไฟล์
       loadedFiles.sort((a, b) => p.basename(a.path).compareTo(p.basename(b.path)));
     } catch (e) {
       _showSnackBar('เกิดข้อผิดพลาดในการอ่านโฟลเดอร์: $e', Colors.red);
@@ -184,7 +187,6 @@ class _CullerHomePageState extends State<CullerHomePage> {
     _preloadAdjacentImages();
   }
 
-  // โหลดภาพปัจจุบันและภาพถัดไปรอไว้ในหน่วยความจำล่วงหน้า
   Future<void> _preloadAdjacentImages() async {
     for (int i = _currentIndex; i <= _currentIndex + 2; i++) {
       if (i >= 0 && i < _imageFiles.length) {
@@ -200,13 +202,11 @@ class _CullerHomePageState extends State<CullerHomePage> {
         }
       }
     }
-    // ล้างแคชภาพที่ผ่านไปแล้วเพื่อประหยัด RAM
     if (_currentIndex - 2 >= 0) {
       _imageBytesCache.remove(_imageFiles[_currentIndex - 2].path);
     }
   }
 
-  /// ดึงข้อมูลภาพสำหรับแสดงผล (รองรับทั้งไฟล์ภาพปกติ และดึง Preview JPEG จากไฟล์ Sony .ARW)
   Future<Uint8List?> _extractImageBytes(File file) async {
     final ext = p.extension(file.path).toLowerCase();
     try {
@@ -215,7 +215,6 @@ class _CullerHomePageState extends State<CullerHomePage> {
         return bytes;
       }
 
-      // กรณีเป็นไฟล์ .ARW:1. ลองดึงจาก EXIF Thumbnail ก่อน
       try {
         final exifData = await readExifFromBytes(bytes);
         if (exifData.containsKey('JPEGThumbnail')) {
@@ -226,8 +225,6 @@ class _CullerHomePageState extends State<CullerHomePage> {
         }
       } catch (_) {}
 
-      // 2. ค้นหา Full-size Embedded JPEG ที่ซ่อนอยู่ในโครงสร้างไฟล์ Sony ARW
-      // โดยสแกนหาจุดเริ่มต้น (FF D8 FF) และจุดสิ้นสุด (FF D9) ของ JPEG ที่มีขนาดใหญ่ที่สุด
       return _extractLargestEmbeddedJpeg(bytes);
     } catch (e) {
       return null;
@@ -238,9 +235,7 @@ class _CullerHomePageState extends State<CullerHomePage> {
     int bestStart = -1;
     int bestLength = 0;
 
-    // ข้ามส่วน Header แรกสุดเพื่อหา Embedded Preview ของจริง
     for (int i = 0; i < bytes.length - 3; i++) {
-      // ค้นหา JPEG SOI Marker: FF D8 FF (ตามด้วย E0, E1, หรือ DB)
       if (bytes[i] == 0xFF &&
           bytes[i + 1] == 0xD8 &&
           bytes[i + 2] == 0xFF &&
@@ -248,12 +243,10 @@ class _CullerHomePageState extends State<CullerHomePage> {
         int start = i;
         int end = -1;
 
-        // ค้นหา EOI Marker (FF D9) ถัดไป
         for (int j = start + 4; j < bytes.length - 1; j++) {
           if (bytes[j] == 0xFF && bytes[j + 1] == 0xD9) {
             end = j + 2;
             int length = end - start;
-            // ภาพ Preview มาตรฐานของ Sony ARW มักมีขนาดตั้งแต่ 300KB ขึ้นไป
             if (length > 300000) {
               break;
             }
@@ -304,7 +297,6 @@ class _CullerHomePageState extends State<CullerHomePage> {
       try {
         movedFile = await currentFile.rename(newFilePath);
       } catch (_) {
-        // กรณีอยู่ต่าง Partition ให้ Copy แล้วลบต้นฉบับ
         movedFile = await currentFile.copy(newFilePath);
         await currentFile.delete();
       }
@@ -319,6 +311,7 @@ class _CullerHomePageState extends State<CullerHomePage> {
         _dragOffset = Offset.zero;
         _isZoomed = false;
         _scaleStateController.scaleState = PhotoViewScaleState.initial;
+        _photoViewController.scale = null;
       });
 
       _preloadAdjacentImages();
@@ -343,10 +336,37 @@ class _CullerHomePageState extends State<CullerHomePage> {
         _dragOffset = Offset.zero;
         _isZoomed = false;
         _scaleStateController.scaleState = PhotoViewScaleState.initial;
+        _photoViewController.scale = null;
       });
       _showSnackBar('เรียกคืนไฟล์ ${p.basename(lastMove.originalFile.path)} แล้ว', Colors.teal);
     } catch (e) {
       _showSnackBar('ไม่สามารถเรียกคืนไฟล์ได้: $e', Colors.redAccent);
+    }
+  }
+
+  void _handleKeyEvent(KeyEvent event) {
+    if (event is! KeyDownEvent) return;
+
+    final key = event.logicalKey;
+    final isCtrlPressed = HardwareKeyboard.instance.isControlPressed;
+
+    if (key == LogicalKeyboardKey.backspace ||
+        (isCtrlPressed && key == LogicalKeyboardKey.keyZ)) {
+      _undoLastAction();
+    } else if (key == LogicalKeyboardKey.arrowLeft || key == LogicalKeyboardKey.keyA) {
+      _handleSwipeAction(SwipeAction.discard);
+    } else if (key == LogicalKeyboardKey.arrowRight || key == LogicalKeyboardKey.keyD) {
+      _handleSwipeAction(SwipeAction.keep);
+    } else if (key == LogicalKeyboardKey.arrowUp || key == LogicalKeyboardKey.keyW) {
+      _handleSwipeAction(SwipeAction.best);
+    } else if (key == LogicalKeyboardKey.arrowDown || key == LogicalKeyboardKey.keyS) {
+      _handleSwipeAction(SwipeAction.atmosphere);
+    } else if (key == LogicalKeyboardKey.escape || key == LogicalKeyboardKey.space) {
+      setState(() {
+        _isZoomed = false;
+        _scaleStateController.scaleState = PhotoViewScaleState.initial;
+        _photoViewController.scale = null;
+      });
     }
   }
 
@@ -368,61 +388,59 @@ class _CullerHomePageState extends State<CullerHomePage> {
     final currentFile = hasImages ? _imageFiles[_currentIndex] : null;
     final activeAction = _getCurrentDragAction();
 
-    return Scaffold(
-      appBar: AppBar(
-        backgroundColor: Colors.black87,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              currentFile != null ? p.basename(currentFile.path) : 'Photo Culler',
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            if (hasImages)
+    return KeyboardListener(
+      focusNode: _keyboardFocusNode,
+      autofocus: true,
+      onKeyEvent: _handleKeyEvent,
+      child: Scaffold(
+        appBar: AppBar(
+          backgroundColor: Colors.black87,
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
               Text(
-                'ภาพที่ ${_currentIndex + 1} จาก ${_imageFiles.length} '
-                '${_isZoomed ? "(โหมดซูม - แตะ 2 ครั้งเพื่อออก)" : ""}',
-                style: const TextStyle(fontSize: 12, color: Colors.white70),
+                currentFile != null ? p.basename(currentFile.path) : 'Photo Culler (PC & Mobile)',
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
+              if (hasImages)
+                Text(
+                  'ภาพที่ ${_currentIndex + 1} จาก ${_imageFiles.length} '
+                  '${_isZoomed ? "(โหมดซูม - กด Spacebar หรือแตะ 2 ครั้งเพื่อออก)" : ""}',
+                  style: const TextStyle(fontSize: 12, color: Colors.white70),
+                ),
+            ],
+          ),
+          actions: [
+            if (_history.isNotEmpty)
+              IconButton(
+                icon: const Icon(Icons.undo),
+                tooltip: 'ย้อนกลับ (Ctrl+Z หรือ Backspace)',
+                onPressed: _undoLastAction,
+              ),
+            IconButton(
+              icon: const Icon(Icons.folder_open),
+              tooltip: 'เลือกโฟลเดอร์รูปภาพ',
+              onPressed: _pickFolder,
+            ),
           ],
         ),
-        actions: [
-          if (_history.isNotEmpty)
-            IconButton(
-              icon: const Icon(Icons.undo),
-              tooltip: 'ย้อนกลับภาพเมื่อสักครู่',
-              onPressed: _undoLastAction,
-            ),
-          IconButton(
-            icon: const Icon(Icons.folder_open),
-            tooltip: 'เลือกโฟลเดอร์รูปภาพ',
-            onPressed: _pickFolder,
-          ),
-        ],
+        body: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : !hasImages
+                ? _buildEmptyState()
+                : Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      _buildDirectionGuides(),
+                      _buildSwipeableCard(currentFile!),
+                      if (activeAction != null) _buildActionBadge(activeAction),
+                      Positioned(
+                        bottom: 20,
+                        child: _buildManualControlBar(),
+                      ),
+                    ],
+                  ),
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : !hasImages
-              ? _buildEmptyState()
-              : Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    // แถบบอกทิศทางรอบขอบจอ
-                    _buildDirectionGuides(),
-
-                    // การ์ดรูปภาพหลักที่ซูมและปัดได้
-                    _buildSwipeableCard(currentFile!),
-
-                    // ป้ายกำกับสถานะขณะลากนิ้ว
-                    if (activeAction != null) _buildActionBadge(activeAction),
-
-                    // ปุ่มกดด้านล่าง (เผื่อไม่อยากปัดหรือต้องการกดเร็วๆ)
-                    Positioned(
-                      bottom: 20,
-                      child: _buildManualControlBar(),
-                    ),
-                  ],
-                ),
     );
   }
 
@@ -443,7 +461,7 @@ class _CullerHomePageState extends State<CullerHomePage> {
             Text(
               isDone
                   ? 'คัดเลือกรูปภาพครบทุกภาพแล้ว!'
-                  : 'เลือกโฟลเดอร์เพื่อเริ่มคัดเลือกรูปภาพ\n(รองรับ JPG, PNG, HEIC, WEBP และ Sony .ARW)',
+                  : 'เลือกโฟลเดอร์เพื่อเริ่มคัดเลือกรูปภาพ\n(รองรับ JPG, PNG, HEIC, WEBP และ Sony .ARW)\n\nบน PC สามารถใช้ปุ่มลูกศร ◀ ▲ ▼ ▶ หรือ W A S D เพื่อคัดแยกรูปได้ทันที',
               textAlign: TextAlign.center,
               style: const TextStyle(fontSize: 16, color: Colors.white70),
             ),
@@ -461,7 +479,7 @@ class _CullerHomePageState extends State<CullerHomePage> {
               TextButton.icon(
                 onPressed: _undoLastAction,
                 icon: const Icon(Icons.undo),
-                label: const Text('ย้อนกลับภาพล่าสุด'),
+                label: const Text('ย้อนกลับภาพล่าสุด (Backspace)'),
               ),
             ]
           ],
@@ -475,7 +493,10 @@ class _CullerHomePageState extends State<CullerHomePage> {
     final ext = p.extension(file.path).toLowerCase();
 
     return Listener(
-      onPointerDown: (_) => _pointerCount++,
+      onPointerDown: (_) {
+        _pointerCount++;
+        _keyboardFocusNode.requestFocus();
+      },
       onPointerUp: (_) {
         _pointerCount = (_pointerCount - 1).clamp(0, 10);
         if (_pointerCount == 0 && !_isZoomed) {
@@ -492,10 +513,21 @@ class _CullerHomePageState extends State<CullerHomePage> {
         setState(() => _dragOffset = Offset.zero);
       },
       onPointerMove: (event) {
-        // อนุญาตให้ปัดการ์ดเฉพาะตอนใช้นิ้วเดียว และไม่ได้อยู่ในโหมดซูม
         if (_pointerCount == 1 && !_isZoomed) {
           setState(() {
             _dragOffset += event.delta;
+          });
+        }
+      },
+      onPointerSignal: (event) {
+        if (event is PointerScrollEvent) {
+          final currentScale = _photoViewController.scale ?? 1.0;
+          final delta = event.scrollDelta.dy < 0 ? 1.2 : 0.8;
+          final newScale = (currentScale * delta).clamp(1.0, 5.0);
+          _photoViewController.scale = newScale;
+          setState(() {
+            _isZoomed = newScale > 1.05;
+            if (_isZoomed) _dragOffset = Offset.zero;
           });
         }
       },
@@ -519,6 +551,7 @@ class _CullerHomePageState extends State<CullerHomePage> {
                 if (imageBytes != null)
                   PhotoView.customChild(
                     key: ValueKey(file.path),
+                    controller: _photoViewController,
                     scaleStateController: _scaleStateController,
                     scaleStateChangedCallback: (state) {
                       setState(() {
@@ -552,6 +585,7 @@ class _CullerHomePageState extends State<CullerHomePage> {
                       }
                       _imageBytesCache[file.path] = snapshot.data;
                       return PhotoView.customChild(
+                        controller: _photoViewController,
                         scaleStateController: _scaleStateController,
                         scaleStateChangedCallback: (state) {
                           setState(() {
@@ -564,8 +598,6 @@ class _CullerHomePageState extends State<CullerHomePage> {
                       );
                     },
                   ),
-
-                // ป้ายกำกับมุมขวาบนกรณีเป็นไฟล์ RAW (.ARW)
                 if (ext == '.arw')
                   Positioned(
                     top: 12,
@@ -625,23 +657,23 @@ class _CullerHomePageState extends State<CullerHomePage> {
   Widget _buildDirectionGuides() {
     return IgnorePointer(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 80),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 80),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text('▲ ปัดขึ้น: ดีที่สุด (ใช้ทันที)',
-                style: TextStyle(color: Colors.white24, fontSize: 11)),
+            const Text('▲ ปัดขึ้น / กด ↑ (W) : ดีที่สุด (ใช้ทันที)',
+                style: TextStyle(color: Colors.white30, fontSize: 12)),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: const [
-                Text('◀ ซ้าย: คัดทิ้ง',
-                    style: TextStyle(color: Colors.white24, fontSize: 11)),
-                Text('ขวา: เก็บไว้ ▶',
-                    style: TextStyle(color: Colors.white24, fontSize: 11)),
+                Text('◀ ซ้าย / กด ← (A) : คัดทิ้ง',
+                    style: TextStyle(color: Colors.white30, fontSize: 12)),
+                Text('ขวา / กด → (D) : เก็บไว้ ▶',
+                    style: TextStyle(color: Colors.white30, fontSize: 12)),
               ],
             ),
-            const Text('▼ ปัดลง: ภาพบรรยากาศ',
-                style: TextStyle(color: Colors.white24, fontSize: 11)),
+            const Text('▼ ปัดลง / กด ↓ (S) : ภาพบรรยากาศ',
+                style: TextStyle(color: Colors.white30, fontSize: 12)),
           ],
         ),
       ),
