@@ -1,0 +1,85 @@
+name: Build APK Automatically
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ดึงไฟล์โค้ดที่เราสร้างไว้
+        uses: actions/checkout@v4
+
+      - name: ติดตั้ง Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: ติดตั้ง Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.0'
+          channel: 'stable'
+
+      - name: สร้างโครงสร้างโปรเจกต์ Android และตั้งค่าสิทธิ์อัตโนมัติ
+        run: |
+          # สำรองไฟล์ที่เราเขียนไว้
+          cp pubspec.yaml /tmp/pubspec.yaml
+          cp lib/main.dart /tmp/main.dart
+          
+          # ให้ Flutter สร้างไฟล์ระบบ Android ที่จำเป็นทั้งหมดขึ้นมา
+          flutter create --org com.personal.photoculler --project-name photo_culler .
+          
+          # นำไฟล์ของเรากลับไปวางทับ
+          cp /tmp/pubspec.yaml pubspec.yaml
+          cp /tmp/main.dart lib/main.dart
+          
+          # เขียนทับไฟล์ AndroidManifest.xml เพื่อเปิดสิทธิ์อ่านเขียนไฟล์และ .ARW อัตโนมัติ
+          cat << 'EOF' > android/app/src/main/AndroidManifest.xml
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
+              <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
+              <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
+              <application
+                  android:label="Photo Culler"
+                  android:name="${applicationName}"
+                  android:icon="@mipmap/ic_launcher"
+                  android:requestLegacyExternalStorage="true">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:launchMode="singleTop"
+                      android:theme="@style/LaunchTheme"
+                      android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+                      android:hardwareAccelerated="true"
+                      android:windowSoftInputMode="adjustResize">
+                      <meta-data
+                        android:name="io.flutter.embedding.android.NormalTheme"
+                        android:resource="@style/NormalTheme"
+                        />
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+                  <meta-data
+                      android:name="flutterEmbedding"
+                      android:value="2" />
+              </application>
+          </manifest>
+          EOF
+
+      - name: ดาวน์โหลดแพ็กเกจเสริม
+        run: flutter pub get
+
+      - name: สั่งคอมไพล์เป็นไฟล์ APK
+        run: flutter build apk --release
+
+      - name: อัปโหลดไฟล์ APK ให้ดาวน์โหลด
+        uses: actions/upload-artifact@v4
+        with:
+          name: photo-culler-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
