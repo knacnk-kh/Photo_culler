@@ -2,10 +2,8 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/gestures.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:photo_view/photo_view.dart';
 import 'package:exif/exif.dart';
 import 'package:path/path.dart' as p;
 
@@ -100,8 +98,7 @@ class _CullerHomePageState extends State<CullerHomePage> {
   Offset _dragOffset = Offset.zero;
   int _pointerCount = 0;
   bool _isZoomed = false;
-  late PhotoViewScaleStateController _scaleStateController;
-  late PhotoViewController _photoViewController;
+  final TransformationController _zoomController = TransformationController();
   final FocusNode _keyboardFocusNode = FocusNode();
 
   final List<MoveHistory> _history = [];
@@ -114,15 +111,43 @@ class _CullerHomePageState extends State<CullerHomePage> {
   @override
   void initState() {
     super.initState();
-    _scaleStateController = PhotoViewScaleStateController();
-    _photoViewController = PhotoViewController();
+    _zoomController.addListener(_onZoomChanged);
     _requestPermissions();
+  }
+
+  void _onZoomChanged() {
+    final scale = _zoomController.value.getMaxScaleOnAxis();
+    final zoomed = scale > 1.05;
+    if (zoomed != _isZoomed) {
+      setState(() {
+        _isZoomed = zoomed;
+        if (_isZoomed) {
+          _dragOffset = Offset.zero;
+        }
+      });
+    }
+  }
+
+  void _resetZoom() {
+    _zoomController.value = Matrix4.identity();
+    setState(() {
+      _isZoomed = false;
+      _dragOffset = Offset.zero;
+    });
+  }
+
+  void _toggleDoubleTapZoom() {
+    if (_isZoomed) {
+      _resetZoom();
+    } else {
+      _zoomController.value = Matrix4.identity()..scale(2.5);
+    }
   }
 
   @override
   void dispose() {
-    _scaleStateController.dispose();
-    _photoViewController.dispose();
+    _zoomController.removeListener(_onZoomChanged);
+    _zoomController.dispose();
     _keyboardFocusNode.dispose();
     super.dispose();
   }
@@ -301,6 +326,7 @@ class _CullerHomePageState extends State<CullerHomePage> {
         await currentFile.delete();
       }
 
+      _zoomController.value = Matrix4.identity();
       setState(() {
         _history.add(MoveHistory(
           originalFile: currentFile,
@@ -310,8 +336,6 @@ class _CullerHomePageState extends State<CullerHomePage> {
         _currentIndex++;
         _dragOffset = Offset.zero;
         _isZoomed = false;
-        _scaleStateController.scaleState = PhotoViewScaleState.initial;
-        _photoViewController.scale = null;
       });
 
       _preloadAdjacentImages();
@@ -331,12 +355,11 @@ class _CullerHomePageState extends State<CullerHomePage> {
       if (await lastMove.movedFile.exists()) {
         await lastMove.movedFile.rename(lastMove.originalFile.path);
       }
+      _zoomController.value = Matrix4.identity();
       setState(() {
         _currentIndex--;
         _dragOffset = Offset.zero;
         _isZoomed = false;
-        _scaleStateController.scaleState = PhotoViewScaleState.initial;
-        _photoViewController.scale = null;
       });
       _showSnackBar('เรียกคืนไฟล์ ${p.basename(lastMove.originalFile.path)} แล้ว', Colors.teal);
     } catch (e) {
@@ -362,11 +385,7 @@ class _CullerHomePageState extends State<CullerHomePage> {
     } else if (key == LogicalKeyboardKey.arrowDown || key == LogicalKeyboardKey.keyS) {
       _handleSwipeAction(SwipeAction.atmosphere);
     } else if (key == LogicalKeyboardKey.escape || key == LogicalKeyboardKey.space) {
-      setState(() {
-        _isZoomed = false;
-        _scaleStateController.scaleState = PhotoViewScaleState.initial;
-        _photoViewController.scale = null;
-      });
+      _resetZoom();
     }
   }
 
@@ -405,12 +424,18 @@ class _CullerHomePageState extends State<CullerHomePage> {
               if (hasImages)
                 Text(
                   'ภาพที่ ${_currentIndex + 1} จาก ${_imageFiles.length} '
-                  '${_isZoomed ? "(โหมดซูม - กด Spacebar หรือแตะ 2 ครั้งเพื่อออก)" : ""}',
+                  '${_isZoomed ? "(โหมดซูม - แตะ 2 ครั้ง หรือกด Spacebar เพื่อออก)" : ""}',
                   style: const TextStyle(fontSize: 12, color: Colors.white70),
                 ),
             ],
           ),
           actions: [
+            if (_isZoomed)
+              IconButton(
+                icon: const Icon(Icons.zoom_out_map),
+                tooltip: 'รีเซ็ตการซูม',
+                onPressed: _resetZoom,
+              ),
             if (_history.isNotEmpty)
               IconButton(
                 icon: const Icon(Icons.undo),
@@ -488,6 +513,27 @@ class _CullerHomePageState extends State<CullerHomePage> {
     );
   }
 
+  Widget _buildZoomableImage(Uint8List bytes, String filePath) {
+    return GestureDetector(
+      onDoubleTap: _toggleDoubleTapZoom,
+      child: InteractiveViewer(
+        key: ValueKey(filePath),
+        transformationController: _zoomController,
+        minScale: 1.0,
+        maxScale: 5.0,
+        panEnabled: _isZoomed,
+        scaleEnabled: true,
+        child: Center(
+          child: Image.memory(
+            bytes,
+            fit: BoxFit.contain,
+            gaplessPlayback: true,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildSwipeableCard(File file) {
     final imageBytes = _imageBytesCache[file.path];
     final ext = p.extension(file.path).toLowerCase();
@@ -519,18 +565,6 @@ class _CullerHomePageState extends State<CullerHomePage> {
           });
         }
       },
-      onPointerSignal: (event) {
-        if (event is PointerScrollEvent) {
-          final currentScale = _photoViewController.scale ?? 1.0;
-          final delta = event.scrollDelta.dy < 0 ? 1.2 : 0.8;
-          final newScale = (currentScale * delta).clamp(1.0, 5.0);
-          _photoViewController.scale = newScale;
-          setState(() {
-            _isZoomed = newScale > 1.05;
-            if (_isZoomed) _dragOffset = Offset.zero;
-          });
-        }
-      },
       child: Transform.translate(
         offset: _dragOffset,
         child: Transform.rotate(
@@ -549,25 +583,7 @@ class _CullerHomePageState extends State<CullerHomePage> {
               fit: StackFit.expand,
               children: [
                 if (imageBytes != null)
-                  PhotoView.customChild(
-                    key: ValueKey(file.path),
-                    controller: _photoViewController,
-                    scaleStateController: _scaleStateController,
-                    scaleStateChangedCallback: (state) {
-                      setState(() {
-                        _isZoomed = state != PhotoViewScaleState.initial;
-                        if (_isZoomed) _dragOffset = Offset.zero;
-                      });
-                    },
-                    minScale: PhotoViewComputedScale.contained,
-                    maxScale: PhotoViewComputedScale.covered * 4.0,
-                    backgroundDecoration: const BoxDecoration(color: Colors.black),
-                    child: Image.memory(
-                      imageBytes,
-                      fit: BoxFit.contain,
-                      gaplessPlayback: true,
-                    ),
-                  )
+                  _buildZoomableImage(imageBytes, file.path)
                 else
                   FutureBuilder<Uint8List?>(
                     future: _extractImageBytes(file),
@@ -584,18 +600,7 @@ class _CullerHomePageState extends State<CullerHomePage> {
                         );
                       }
                       _imageBytesCache[file.path] = snapshot.data;
-                      return PhotoView.customChild(
-                        controller: _photoViewController,
-                        scaleStateController: _scaleStateController,
-                        scaleStateChangedCallback: (state) {
-                          setState(() {
-                            _isZoomed = state != PhotoViewScaleState.initial;
-                          });
-                        },
-                        minScale: PhotoViewComputedScale.contained,
-                        maxScale: PhotoViewComputedScale.covered * 4.0,
-                        child: Image.memory(snapshot.data!, fit: BoxFit.contain),
-                      );
+                      return _buildZoomableImage(snapshot.data!, file.path);
                     },
                   ),
                 if (ext == '.arw')
