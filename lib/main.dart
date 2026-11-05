@@ -1,10 +1,8 @@
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:exif/exif.dart';
 import 'package:path/path.dart' as p;
 
 void main() {
@@ -140,7 +138,7 @@ class _CullerHomePageState extends State<CullerHomePage> {
     if (_isZoomed) {
       _resetZoom();
     } else {
-      _zoomController.value = Matrix4.identity()..scale(2.5);
+      _zoomController.value = Matrix4.diagonal3Values(2.5, 2.5, 1.0);
     }
   }
 
@@ -239,17 +237,6 @@ class _CullerHomePageState extends State<CullerHomePage> {
       if (ext != '.arw') {
         return bytes;
       }
-
-      try {
-        final exifData = await readExifFromBytes(bytes);
-        if (exifData.containsKey('JPEGThumbnail')) {
-          final thumb = exifData['JPEGThumbnail']!.values.toList();
-          if (thumb.length > 50000) {
-            return Uint8List.fromList(thumb);
-          }
-        }
-      } catch (_) {}
-
       return _extractLargestEmbeddedJpeg(bytes);
     } catch (e) {
       return null;
@@ -272,7 +259,7 @@ class _CullerHomePageState extends State<CullerHomePage> {
           if (bytes[j] == 0xFF && bytes[j + 1] == 0xD9) {
             end = j + 2;
             int length = end - start;
-            if (length > 300000) {
+            if (length > 200000) {
               break;
             }
           }
@@ -610,7 +597,7 @@ class _CullerHomePageState extends State<CullerHomePage> {
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                       decoration: BoxDecoration(
-                        color: Colors.orange.withOpacity(0.85),
+                        color: const Color(0xD9FF9800),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: const Text(
@@ -636,7 +623,7 @@ class _CullerHomePageState extends State<CullerHomePage> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
         decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.75),
+          color: const Color(0xBF000000),
           border: Border.all(color: action.color, width: 3),
           borderRadius: BorderRadius.circular(16),
         ),
@@ -660,24 +647,24 @@ class _CullerHomePageState extends State<CullerHomePage> {
   }
 
   Widget _buildDirectionGuides() {
-    return IgnorePointer(
+    return const IgnorePointer(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 80),
+        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 80),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text('▲ ปัดขึ้น / กด ↑ (W) : ดีที่สุด (ใช้ทันที)',
+            Text('▲ ปัดขึ้น / กด ↑ (W) : ดีที่สุด (ใช้ทันที)',
                 style: TextStyle(color: Colors.white30, fontSize: 12)),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: const [
+              children: [
                 Text('◀ ซ้าย / กด ← (A) : คัดทิ้ง',
                     style: TextStyle(color: Colors.white30, fontSize: 12)),
                 Text('ขวา / กด → (D) : เก็บไว้ ▶',
                     style: TextStyle(color: Colors.white30, fontSize: 12)),
               ],
             ),
-            const Text('▼ ปัดลง / กด ↓ (S) : ภาพบรรยากาศ',
+            Text('▼ ปัดลง / กด ↓ (S) : ภาพบรรยากาศ',
                 style: TextStyle(color: Colors.white30, fontSize: 12)),
           ],
         ),
@@ -689,7 +676,7 @@ class _CullerHomePageState extends State<CullerHomePage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: BoxDecoration(
-        color: Colors.grey[900]?.withOpacity(0.9),
+        color: const Color(0xE6212121),
         borderRadius: BorderRadius.circular(30),
       ),
       child: Row(
