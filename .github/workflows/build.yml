@@ -36,43 +36,13 @@ jobs:
           # 1. เพิ่มสิทธิ์อ่านเขียนไฟล์และ .ARW
           sed -i 's/<application/<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"\/><uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"\/><uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"\/><application android:requestLegacyExternalStorage="true"/' android/app/src/main/AndroidManifest.xml
           
-          # 2. บังคับตั้งค่า compileSdk เป็น 36 ในระดับแอปหลัก (รองรับทั้งไฟล์แบบ Groovy และ Kotlin DSL)
+          # 2. ตั้งค่า compileSdk = 36 ในไฟล์ของแอปหลักโดยตรง (ไม่ต้องใช้ afterEvaluate)
           if [ -f "android/app/build.gradle" ]; then
             sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 36/g' android/app/build.gradle
             sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 36/g' android/app/build.gradle
           fi
           if [ -f "android/app/build.gradle.kts" ]; then
             sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 36/g' android/app/build.gradle.kts
-          fi
-
-          # 3. บังคับให้ปลั๊กอินทุกตัว (เช่น file_picker) ใช้ compileSdk 36 ทั้งหมด
-          if [ -f "android/build.gradle" ]; then
-            cat << 'EOF' >> android/build.gradle
-
-          subprojects {
-              afterEvaluate { project ->
-                  if (project.hasProperty("android")) {
-                      project.android {
-                          compileSdkVersion 36
-                      }
-                  }
-              }
-          }
-          EOF
-          fi
-          if [ -f "android/build.gradle.kts" ]; then
-            cat << 'EOF' >> android/build.gradle.kts
-
-          subprojects {
-              afterEvaluate {
-                  if (extensions.findByName("android") != null) {
-                      configure<com.android.build.gradle.BaseExtension> {
-                          compileSdkVersion(36)
-                      }
-                  }
-              }
-          }
-          EOF
           fi
 
       - name: Install Dependencies
