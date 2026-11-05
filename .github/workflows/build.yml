@@ -1,4 +1,4 @@
-name: Build APK Automatically
+name: Build Android APK & Windows PC App
 
 on:
   push:
@@ -6,80 +6,77 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build_android:
+    name: Build Android APK
     runs-on: ubuntu-latest
     steps:
-      - name: ดึงไฟล์โค้ดที่เราสร้างไว้
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: ติดตั้ง Java
+      - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: ติดตั้ง Flutter
+      - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.0'
+          flutter-version: '3.24.0'
           channel: 'stable'
 
-      - name: สร้างโครงสร้างโปรเจกต์ Android และตั้งค่าสิทธิ์อัตโนมัติ
+      - name: Prepare Android Project
         run: |
-          # สำรองไฟล์ที่เราเขียนไว้
           cp pubspec.yaml /tmp/pubspec.yaml
           cp lib/main.dart /tmp/main.dart
-          
-          # ให้ Flutter สร้างไฟล์ระบบ Android ที่จำเป็นทั้งหมดขึ้นมา
           flutter create --org com.personal.photoculler --project-name photo_culler .
-          
-          # นำไฟล์ของเรากลับไปวางทับ
           cp /tmp/pubspec.yaml pubspec.yaml
           cp /tmp/main.dart lib/main.dart
-          
-          # เขียนทับไฟล์ AndroidManifest.xml เพื่อเปิดสิทธิ์อ่านเขียนไฟล์และ .ARW อัตโนมัติ
-          cat << 'EOF' > android/app/src/main/AndroidManifest.xml
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-              <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
-              <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
-              <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
-              <application
-                  android:label="Photo Culler"
-                  android:name="${applicationName}"
-                  android:icon="@mipmap/ic_launcher"
-                  android:requestLegacyExternalStorage="true">
-                  <activity
-                      android:name=".MainActivity"
-                      android:exported="true"
-                      android:launchMode="singleTop"
-                      android:theme="@style/LaunchTheme"
-                      android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
-                      android:hardwareAccelerated="true"
-                      android:windowSoftInputMode="adjustResize">
-                      <meta-data
-                        android:name="io.flutter.embedding.android.NormalTheme"
-                        android:resource="@style/NormalTheme"
-                        />
-                      <intent-filter>
-                          <action android:name="android.intent.action.MAIN"/>
-                          <category android:name="android.intent.category.LAUNCHER"/>
-                      </intent-filter>
-                  </activity>
-                  <meta-data
-                      android:name="flutterEmbedding"
-                      android:value="2" />
-              </application>
-          </manifest>
-          EOF
+          sed -i 's/<application/<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"\/><uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"\/><uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"\/><application android:requestLegacyExternalStorage="true"/' android/app/src/main/AndroidManifest.xml
 
-      - name: ดาวน์โหลดแพ็กเกจเสริม
+      - name: Install Dependencies
         run: flutter pub get
 
-      - name: สั่งคอมไพล์เป็นไฟล์ APK
+      - name: Build APK
         run: flutter build apk --release
 
-      - name: อัปโหลดไฟล์ APK ให้ดาวน์โหลด
+      - name: Upload Android APK
         uses: actions/upload-artifact@v4
         with:
-          name: photo-culler-apk
+          name: photo-culler-android-apk
           path: build/app/outputs/flutter-apk/app-release.apk
+
+  build_windows:
+    name: Build Windows PC App
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+
+      - name: Prepare Windows Project
+        shell: pwsh
+        run: |
+          Copy-Item pubspec.yaml $env:TEMP\pubspec.yaml
+          Copy-Item lib/main.dart $env:TEMP\main.dart
+          flutter config --enable-windows-desktop
+          flutter create --platforms=windows --project-name photo_culler .
+          Copy-Item $env:TEMP\pubspec.yaml pubspec.yaml -Force
+          Copy-Item $env:TEMP\main.dart lib/main.dart -Force
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Build Windows EXE
+        run: flutter build windows --release
+
+      - name: Upload Windows App
+        uses: actions/upload-artifact@v4
+        with:
+          name: photo-culler-windows-pc
+          path: build/windows/x64/runner/Release/
