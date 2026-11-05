@@ -1,5 +1,5 @@
 name: photo_culler
-description: แอปคัดเลือกรูปภาพสไตล์ Tinder รองรับไฟล์ทั่วไปและ Sony ARW
+description: แอปคัดเลือกรูปภาพสำหรับ Android 
 publish_to: 'none'
 version: 1.0.0+1
 
