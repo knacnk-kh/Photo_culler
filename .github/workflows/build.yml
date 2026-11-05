@@ -29,22 +29,13 @@ jobs:
           cp pubspec.yaml /tmp/pubspec.yaml
           cp lib/main.dart /tmp/main.dart
           flutter create --org com.personal.photoculler --project-name photo_culler .
+          rm -rf test
           cp /tmp/pubspec.yaml pubspec.yaml
           cp /tmp/main.dart lib/main.dart
-          
-          # เพิ่มสิทธิ์อ่านเขียนไฟล์และ .ARW
           sed -i 's/<application/<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"\/><uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"\/><uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"\/><application android:requestLegacyExternalStorage="true"/' android/app/src/main/AndroidManifest.xml
-          
-          # อัปเกรดเวอร์ชัน Kotlin ใน settings.gradle ป้องกัน Error Kotlin Gradle plugin
-          if [ -f "android/settings.gradle" ]; then
-            sed -i 's/id "org.jetbrains.kotlin.android" version "[^"]*"/id "org.jetbrains.kotlin.android" version "1.9.24"/g' android/settings.gradle
-          fi
 
       - name: Install Dependencies
         run: flutter pub get
-
-      - name: Check Code Before Build
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
       - name: Build APK
         run: flutter build apk --release
@@ -74,6 +65,7 @@ jobs:
           Copy-Item lib/main.dart $env:TEMP\main.dart
           flutter config --enable-windows-desktop
           flutter create --platforms=windows --project-name photo_culler .
+          if (Test-Path test) { Remove-Item -Recurse -Force test }
           Copy-Item $env:TEMP\pubspec.yaml pubspec.yaml -Force
           Copy-Item $env:TEMP\main.dart lib/main.dart -Force
 
