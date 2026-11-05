@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path/path.dart' as p;
 
@@ -164,33 +163,69 @@ class _CullerHomePageState extends State<CullerHomePage> {
   Future<void> _pickFolder() async {
     await _requestPermissions();
 
-    String? selectedDir = await FilePicker.platform.getDirectoryPath(
-      dialogTitle: 'เลือกโฟลเดอร์รูปภาพที่ต้องการคัดเลือก',
-    );
-
-    if (selectedDir != null) {
-      setState(() {
-        _selectedDirectory = selectedDir;
-        _isLoading = true;
-        _imageFiles.clear();
-        _currentIndex = 0;
-        _history.clear();
-        _imageBytesCache.clear();
-      });
-
-      await _loadImagesFromDirectory(selectedDir);
-
-      setState(() {
-        _isLoading = false;
-      });
-      _keyboardFocusNode.requestFocus();
+    // กำหนด path เริ่มต้นสำหรับ Android และ Windows
+    String defaultPath = '';
+    if (Platform.isAndroid) {
+      defaultPath = '/storage/emulated/0/DCIM';
+      if (!Directory(defaultPath).existsSync()) {
+        defaultPath = '/storage/emulated/0';
+      }
+    } else {
+      defaultPath = Directory.current.path;
     }
+
+    // แสดง Dialog ให้พิมพ์ระบุโฟลเดอร์ภาพเพื่อความรวดเร็วและแม่นยำ
+    TextEditingController controller = TextEditingController(text: defaultPath);
+
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('ระบุที่อยู่โฟลเดอร์รูปภาพ'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('ใส่ Path โฟลเดอร์รูปภาพที่ต้องการคัดเลือก:', style: TextStyle(fontSize: 13, color: Colors.white70)),
+            const SizedBox(height: 10),
+            TextField(
+              controller: controller,
+              decoration: const InputDecoration(border: OutlineInputBorder()),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('ยกเลิก'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _loadImagesFromDirectory(controller.text.trim());
+            },
+            child: const Text('ตกลง'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _loadImagesFromDirectory(String dirPath) async {
     final dir = Directory(dirPath);
-    final List<File> loadedFiles = [];
+    if (!await dir.exists()) {
+      _showSnackBar('ไม่พบโฟลเดอร์ดังกล่าวในระบบ', Colors.red);
+      return;
+    }
 
+    setState(() {
+      _selectedDirectory = dirPath;
+      _isLoading = true;
+      _imageFiles.clear();
+      _currentIndex = 0;
+      _history.clear();
+      _imageBytesCache.clear();
+    });
+
+    final List<File> loadedFiles = [];
     try {
       final entities = dir.listSync(recursive: false, followLinks: false);
       for (var entity in entities) {
@@ -206,8 +241,12 @@ class _CullerHomePageState extends State<CullerHomePage> {
       _showSnackBar('เกิดข้อผิดพลาดในการอ่านโฟลเดอร์: $e', Colors.red);
     }
 
-    _imageFiles = loadedFiles;
+    setState(() {
+      _imageFiles = loadedFiles;
+      _isLoading = false;
+    });
     _preloadAdjacentImages();
+    _keyboardFocusNode.requestFocus();
   }
 
   Future<void> _preloadAdjacentImages() async {
@@ -481,7 +520,7 @@ class _CullerHomePageState extends State<CullerHomePage> {
             ElevatedButton.icon(
               onPressed: _pickFolder,
               icon: const Icon(Icons.folder_open),
-              label: const Text('เลือกโฟลเดอร์รูปภาพ'),
+              label: const Text('ระบุโฟลเดอร์รูปภาพ'),
               style: ElevatedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
               ),
@@ -687,7 +726,7 @@ class _CullerHomePageState extends State<CullerHomePage> {
             child: IconButton(
               icon: Icon(action.icon, color: action.color, size: 28),
               tooltip: action.label,
-              onPressed: () => _handleSwipeAction(action),
+              onPressed: _handleSwipeAction(action),
             ),
           );
         }).toList(),
