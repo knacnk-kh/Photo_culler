@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path/path.dart' as p;
 
@@ -163,49 +164,14 @@ class _CullerHomePageState extends State<CullerHomePage> {
   Future<void> _pickFolder() async {
     await _requestPermissions();
 
-    String defaultPath = '';
-    if (Platform.isAndroid) {
-      defaultPath = '/storage/emulated/0/DCIM';
-      if (!Directory(defaultPath).existsSync()) {
-        defaultPath = '/storage/emulated/0';
-      }
-    } else {
-      defaultPath = Directory.current.path;
-    }
-
-    TextEditingController controller = TextEditingController(text: defaultPath);
-
-    if (!mounted) return;
-    await showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('ระบุที่อยู่โฟลเดอร์รูปภาพ'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('ใส่ Path โฟลเดอร์รูปภาพที่ต้องการคัดเลือก:', style: TextStyle(fontSize: 13, color: Colors.white70)),
-            const SizedBox(height: 10),
-            TextField(
-              controller: controller,
-              decoration: const InputDecoration(border: OutlineInputBorder()),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('ยกเลิก'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _loadImagesFromDirectory(controller.text.trim());
-            },
-            child: const Text('ตกลง'),
-          ),
-        ],
-      ),
+    // ใช้ FilePicker เพื่อเปิดหน้าต่างเลือกโฟลเดอร์แบบกดเลือกได้ง่ายๆ
+    String? selectedDir = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: 'เลือกโฟลเดอร์รูปภาพที่ต้องการคัดเลือก',
     );
+
+    if (selectedDir != null) {
+      await _loadImagesFromDirectory(selectedDir);
+    }
   }
 
   Future<void> _loadImagesFromDirectory(String dirPath) async {
@@ -519,7 +485,7 @@ class _CullerHomePageState extends State<CullerHomePage> {
             ElevatedButton.icon(
               onPressed: _pickFolder,
               icon: const Icon(Icons.folder_open),
-              label: const Text('ระบุโฟลเดอร์รูปภาพ'),
+              label: const Text('เลือกโฟลเดอร์รูปภาพ'),
               style: ElevatedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
               ),
@@ -725,7 +691,6 @@ class _CullerHomePageState extends State<CullerHomePage> {
             child: IconButton(
               icon: Icon(action.icon, color: action.color, size: 28),
               tooltip: action.label,
-              // [จุดที่แก้ไข] ครอบด้วย callback แบบ synchronous เพื่อป้องกัน Type Error
               onPressed: () {
                 _handleSwipeAction(action);
               },
