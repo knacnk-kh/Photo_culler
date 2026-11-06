@@ -32,25 +32,25 @@ class PhotoCullerApp extends StatelessWidget {
 enum SwipeAction {
   discard(
     folderName: 'คัดทิ้ง',
-    label: 'คัดทิ้ง (← / A)',
+    label: 'คัดทิ้ง',
     color: Colors.redAccent,
     icon: Icons.delete_outline,
   ),
   keep(
     folderName: 'ภาพที่ใช้ได้',
-    label: 'เก็บไว้ (→ / D)',
+    label: 'เก็บไว้',
     color: Colors.greenAccent,
     icon: Icons.check_circle_outline,
   ),
   best(
     folderName: 'ภาพที่นำไปใช้ได้ทันที',
-    label: 'ดีที่สุด (↑ / W)',
+    label: 'ดีที่สุด',
     color: Colors.amberAccent,
     icon: Icons.star_outline,
   ),
   atmosphere(
     folderName: 'ภาพบรรยากาศ',
-    label: 'ภาพบรรยากาศ (↓ / S)',
+    label: 'ภาพบรรยากาศ',
     color: Colors.lightBlueAccent,
     icon: Icons.landscape_outlined,
   );
@@ -87,13 +87,18 @@ class CullerHomePage extends StatefulWidget {
   State<CullerHomePage> createState() => _CullerHomePageState();
 }
 
-class _CullerHomePageState extends State<CullerHomePage> {
+class _CullerHomePageState extends State<CullerHomePage>
+    with SingleTickerProviderStateMixin {
   String? _selectedDirectory;
   List<File> _imageFiles = [];
   int _currentIndex = 0;
   bool _isLoading = false;
 
+  // สำหรับระบบแอนิเมชั่นสปริงให้สมูท
+  late AnimationController _animController;
+  Animation<Offset> _animation = const AlwaysStoppedAnimation(Offset.zero);
   Offset _dragOffset = Offset.zero;
+
   int _pointerCount = 0;
   bool _isZoomed = false;
   final TransformationController _zoomController = TransformationController();
@@ -109,6 +114,15 @@ class _CullerHomePageState extends State<CullerHomePage> {
   @override
   void initState() {
     super.initState();
+    _animController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 250),
+    )..addListener(() {
+        setState(() {
+          _dragOffset = _animation.value;
+        });
+      });
+
     _zoomController.addListener(_onZoomChanged);
     _requestPermissions();
   }
@@ -144,6 +158,7 @@ class _CullerHomePageState extends State<CullerHomePage> {
 
   @override
   void dispose() {
+    _animController.dispose();
     _zoomController.removeListener(_onZoomChanged);
     _zoomController.dispose();
     _keyboardFocusNode.dispose();
@@ -164,7 +179,6 @@ class _CullerHomePageState extends State<CullerHomePage> {
   Future<void> _pickFolder() async {
     await _requestPermissions();
 
-    // ใช้ FilePicker เพื่อเปิดหน้าต่างเลือกโฟลเดอร์แบบกดเลือกได้ง่ายๆ
     String? selectedDir = await FilePicker.platform.getDirectoryPath(
       dialogTitle: 'เลือกโฟลเดอร์รูปภาพที่ต้องการคัดเลือก',
     );
@@ -296,46 +310,65 @@ class _CullerHomePageState extends State<CullerHomePage> {
     }
   }
 
+  // อนิเมชั่นสปริงตอนปัดออกหรือดีดกลับ
+  void _runAnimation(Offset begin, Offset end, {VoidCallback? onCompleted}) {
+    _animation = Tween<Offset>(begin: begin, end: end).animate(
+      CurvedAnimation(parent: _animController, curve: Curves.easeOutCubic),
+    );
+    _animController.forward(from: 0).then((_) {
+      if (onCompleted != null) onCompleted();
+    });
+  }
+
   Future<void> _handleSwipeAction(SwipeAction action) async {
     if (_currentIndex >= _imageFiles.length || _selectedDirectory == null) return;
 
     final currentFile = _imageFiles[_currentIndex];
     final targetDir = Directory(p.join(_selectedDirectory!, action.folderName));
 
-    try {
-      if (!await targetDir.exists()) {
-        await targetDir.create(recursive: true);
-      }
+    // ดีดการ์ดพุ่งออกไปตามทิศทางที่ปัดอย่างสมูท
+    Offset targetOffset = Offset.zero;
+    if (action == SwipeAction.keep) targetOffset = const Offset(600, 0);
+    else if (action == SwipeAction.discard) targetOffset = const Offset(-600, 0);
+    else if (action == SwipeAction.best) targetOffset = const Offset(0, -600);
+    else if (action == SwipeAction.atmosphere) targetOffset = const Offset(0, 600);
 
-      final newFilePath = p.join(targetDir.path, p.basename(currentFile.path));
-      File movedFile;
-
+    _runAnimation(_dragOffset, targetOffset, onCompleted: () async {
       try {
-        movedFile = await currentFile.rename(newFilePath);
-      } catch (_) {
-        movedFile = await currentFile.copy(newFilePath);
-        await currentFile.delete();
+        if (!await targetDir.exists()) {
+          await targetDir.create(recursive: true);
+        }
+
+        final newFilePath = p.join(targetDir.path, p.basename(currentFile.path));
+        File movedFile;
+
+        try {
+          movedFile = await currentFile.rename(newFilePath);
+        } catch (_) {
+          movedFile = await currentFile.copy(newFilePath);
+          await currentFile.delete();
+        }
+
+        _zoomController.value = Matrix4.identity();
+        setState(() {
+          _history.add(MoveHistory(
+            originalFile: currentFile,
+            movedFile: movedFile,
+            action: action,
+          ));
+          _currentIndex++;
+          _dragOffset = Offset.zero;
+          _isZoomed = false;
+        });
+
+        _preloadAdjacentImages();
+      } catch (e) {
+        _showSnackBar('ย้ายไฟล์ไม่สำเร็จ: $e', Colors.redAccent);
+        setState(() {
+          _dragOffset = Offset.zero;
+        });
       }
-
-      _zoomController.value = Matrix4.identity();
-      setState(() {
-        _history.add(MoveHistory(
-          originalFile: currentFile,
-          movedFile: movedFile,
-          action: action,
-        ));
-        _currentIndex++;
-        _dragOffset = Offset.zero;
-        _isZoomed = false;
-      });
-
-      _preloadAdjacentImages();
-    } catch (e) {
-      _showSnackBar('ย้ายไฟล์ไม่สำเร็จ: $e', Colors.redAccent);
-      setState(() {
-        _dragOffset = Offset.zero;
-      });
-    }
+    });
   }
 
   Future<void> _undoLastAction() async {
@@ -409,13 +442,13 @@ class _CullerHomePageState extends State<CullerHomePage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                currentFile != null ? p.basename(currentFile.path) : 'Photo Culler (Mobile)',
+                currentFile != null ? p.basename(currentFile.path) : 'Photo Culler',
                 style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
               if (hasImages)
                 Text(
                   'ภาพที่ ${_currentIndex + 1} จาก ${_imageFiles.length} '
-                  '${_isZoomed ? "(โหมดซูม - แตะ 2 ครั้ง หรือกด Spacebar เพื่อออก)" : ""}',
+                  '${_isZoomed ? "(โหมดซูม - แตะ 2 ครั้ง เพื่อออก)" : ""}',
                   style: const TextStyle(fontSize: 12, color: Colors.white70),
                 ),
             ],
@@ -430,7 +463,7 @@ class _CullerHomePageState extends State<CullerHomePage> {
             if (_history.isNotEmpty)
               IconButton(
                 icon: const Icon(Icons.undo),
-                tooltip: 'ย้อนกลับ (Ctrl+Z หรือ Backspace)',
+                tooltip: 'ย้อนกลับ',
                 onPressed: _undoLastAction,
               ),
             IconButton(
@@ -447,7 +480,7 @@ class _CullerHomePageState extends State<CullerHomePage> {
                 : Stack(
                     alignment: Alignment.center,
                     children: [
-                      _buildDirectionGuides(),
+                      // เอาตัวหนังสือบอกทิศทางออกเพื่อให้หน้าจอสะอาดตาขึ้น
                       _buildSwipeableCard(currentFile!),
                       if (activeAction != null) _buildActionBadge(activeAction),
                       Positioned(
@@ -495,7 +528,7 @@ class _CullerHomePageState extends State<CullerHomePage> {
               TextButton.icon(
                 onPressed: _undoLastAction,
                 icon: const Icon(Icons.undo),
-                label: const Text('ย้อนกลับภาพล่าสุด (Backspace)'),
+                label: const Text('ย้อนกลับภาพล่าสุด'),
               ),
             ]
           ],
@@ -541,13 +574,14 @@ class _CullerHomePageState extends State<CullerHomePage> {
           if (action != null) {
             _handleSwipeAction(action);
           } else {
-            setState(() => _dragOffset = Offset.zero);
+            // ปล่อยนิ้วแล้วไม่ถึงเกณฑ์ ให้ดีดกลับมาตรงกลางอย่างนุ่มนวล
+            _runAnimation(_dragOffset, Offset.zero);
           }
         }
       },
       onPointerCancel: (_) {
         _pointerCount = 0;
-        setState(() => _dragOffset = Offset.zero);
+        _runAnimation(_dragOffset, Offset.zero);
       },
       onPointerMove: (event) {
         if (_pointerCount == 1 && !_isZoomed) {
@@ -644,32 +678,6 @@ class _CullerHomePageState extends State<CullerHomePage> {
                 fontWeight: FontWeight.bold,
               ),
             ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDirectionGuides() {
-    return const IgnorePointer(
-      child: Padding(
-        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 80),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text('▲ ปัดขึ้น : ดีที่สุด (ใช้ทันที)',
-                style: TextStyle(color: Colors.white30, fontSize: 12)),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text('◀ ซ้าย : คัดทิ้ง',
-                    style: TextStyle(color: Colors.white30, fontSize: 12)),
-                Text('ขวา : เก็บไว้ ▶',
-                    style: TextStyle(color: Colors.white30, fontSize: 12)),
-              ],
-            ),
-            Text('▼ ปัดลง : ภาพบรรยากาศ',
-                style: TextStyle(color: Colors.white30, fontSize: 12)),
           ],
         ),
       ),
