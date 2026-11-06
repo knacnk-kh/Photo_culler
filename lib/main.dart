@@ -163,7 +163,6 @@ class _CullerHomePageState extends State<CullerHomePage> {
   Future<void> _pickFolder() async {
     await _requestPermissions();
 
-    // กำหนด path เริ่มต้นสำหรับ Android และ Windows
     String defaultPath = '';
     if (Platform.isAndroid) {
       defaultPath = '/storage/emulated/0/DCIM';
@@ -174,9 +173,9 @@ class _CullerHomePageState extends State<CullerHomePage> {
       defaultPath = Directory.current.path;
     }
 
-    // แสดง Dialog ให้พิมพ์ระบุโฟลเดอร์ภาพเพื่อความรวดเร็วและแม่นยำ
     TextEditingController controller = TextEditingController(text: defaultPath);
 
+    if (!mounted) return;
     await showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -444,7 +443,7 @@ class _CullerHomePageState extends State<CullerHomePage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                currentFile != null ? p.basename(currentFile.path) : 'Photo Culler (PC & Mobile)',
+                currentFile != null ? p.basename(currentFile.path) : 'Photo Culler (Mobile)',
                 style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
               if (hasImages)
@@ -512,7 +511,7 @@ class _CullerHomePageState extends State<CullerHomePage> {
             Text(
               isDone
                   ? 'คัดเลือกรูปภาพครบทุกภาพแล้ว!'
-                  : 'เลือกโฟลเดอร์เพื่อเริ่มคัดเลือกรูปภาพ\n(รองรับ JPG, PNG, HEIC, WEBP และ Sony .ARW)\n\nบน PC สามารถใช้ปุ่มลูกศร ◀ ▲ ▼ ▶ หรือ W A S D เพื่อคัดแยกรูปได้ทันที',
+                  : 'เลือกโฟลเดอร์เพื่อเริ่มคัดเลือกรูปภาพ\n(รองรับ JPG, PNG, HEIC, WEBP และ Sony .ARW)',
               textAlign: TextAlign.center,
               style: const TextStyle(fontSize: 16, color: Colors.white70),
             ),
@@ -692,18 +691,18 @@ class _CullerHomePageState extends State<CullerHomePage> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text('▲ ปัดขึ้น / กด ↑ (W) : ดีที่สุด (ใช้ทันที)',
+            Text('▲ ปัดขึ้น : ดีที่สุด (ใช้ทันที)',
                 style: TextStyle(color: Colors.white30, fontSize: 12)),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('◀ ซ้าย / กด ← (A) : คัดทิ้ง',
+                Text('◀ ซ้าย : คัดทิ้ง',
                     style: TextStyle(color: Colors.white30, fontSize: 12)),
-                Text('ขวา / กด → (D) : เก็บไว้ ▶',
+                Text('ขวา : เก็บไว้ ▶',
                     style: TextStyle(color: Colors.white30, fontSize: 12)),
               ],
             ),
-            Text('▼ ปัดลง / กด ↓ (S) : ภาพบรรยากาศ',
+            Text('▼ ปัดลง : ภาพบรรยากาศ',
                 style: TextStyle(color: Colors.white30, fontSize: 12)),
           ],
         ),
@@ -726,7 +725,10 @@ class _CullerHomePageState extends State<CullerHomePage> {
             child: IconButton(
               icon: Icon(action.icon, color: action.color, size: 28),
               tooltip: action.label,
-              onPressed: _handleSwipeAction(action),
+              // [จุดที่แก้ไข] ครอบด้วย callback แบบ synchronous เพื่อป้องกัน Type Error
+              onPressed: () {
+                _handleSwipeAction(action);
+              },
             ),
           );
         }).toList(),
