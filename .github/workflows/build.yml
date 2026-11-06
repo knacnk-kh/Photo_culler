@@ -1,4 +1,4 @@
-name: Build Android APK & Windows PC App
+name: Build Android APK Only
 
 on:
   push:
@@ -33,10 +33,10 @@ jobs:
           cp /tmp/pubspec.yaml pubspec.yaml
           cp /tmp/main.dart lib/main.dart
           
-          # 1. เพิ่มสิทธิ์อ่านเขียนไฟล์และ .ARW
+          # เพิ่มสิทธิ์อ่านเขียนไฟล์และเข้าถึงพื้นที่ทั้งหมด
           sed -i 's/<application/<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"\/><uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"\/><uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"\/><application android:requestLegacyExternalStorage="true"/' android/app/src/main/AndroidManifest.xml
           
-          # 2. บังคับตั้งค่า compileSdk และ targetSdk เป็น 36
+          # ตั้งค่า compileSdk และ targetSdk เป็น 36
           if [ -f "android/app/build.gradle" ]; then
             sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 36/g' android/app/build.gradle
             sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 36/g' android/app/build.gradle
@@ -59,38 +59,3 @@ jobs:
         with:
           name: photo-culler-android-apk
           path: build/app/outputs/flutter-apk/app-release.apk
-
-  build_windows:
-    name: Build Windows PC App
-    runs-on: windows-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Flutter (Latest Stable)
-        uses: subosito/flutter-action@v2
-        with:
-          channel: 'stable'
-
-      - name: Prepare Windows Project
-        shell: pwsh
-        run: |
-          Copy-Item pubspec.yaml $env:TEMP\pubspec.yaml
-          Copy-Item lib/main.dart $env:TEMP\main.dart
-          flutter config --enable-windows-desktop
-          flutter create --platforms=windows --project-name photo_culler .
-          if (Test-Path test) { Remove-Item -Recurse -Force test }
-          Copy-Item $env:TEMP\pubspec.yaml pubspec.yaml -Force
-          Copy-Item $env:TEMP\main.dart lib/main.dart -Force
-
-      - name: Install Dependencies
-        run: flutter pub get
-
-      - name: Build Windows EXE
-        run: flutter build windows --release
-
-      - name: Upload Windows App
-        uses: actions/upload-artifact@v4
-        with:
-          name: photo-culler-windows-pc
-          path: build/windows/x64/runner/Release/
